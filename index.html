@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ECLIPS — Control Node</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg:      #030712;
+    --surface: #0a0f1e;
+    --border:  #0f2040;
+    --accent:  #00d4ff;
+    --accent2: #7b2fff;
+    --green:   #00ff88;
+    --red:     #ff3860;
+    --yellow:  #ffdd57;
+    --text:    #c8d8f0;
+    --dim:     #3a5070;
+    --glow:    0 0 20px rgba(0,212,255,.35);
+    --glow2:   0 0 30px rgba(123,47,255,.4);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Scanlines overlay ─────────────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,.08) 2px,
+      rgba(0,0,0,.08) 4px
+    );
+  }
+
+  /* ── Grid background ───────────────────────────────────────── */
+  body::after {
+    content: '';
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(0,212,255,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .container {
+    position: relative; z-index: 1;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 24px 48px;
+  }
+
+  /* ── Header ────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 0 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+
+  .logo {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 28px;
+    letter-spacing: 6px;
+    color: var(--accent);
+    text-shadow: var(--glow);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 12px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .5; transform: scale(.8); }
+  }
+
+  .header-meta {
+    font-size: 11px;
+    color: var(--dim);
+    text-align: right;
+    line-height: 1.8;
+  }
+
+  #server-ip { color: var(--accent); }
+  #clock     { color: var(--green); }
+
+  /* ── Auth overlay ───────────────────────────────────────────── */
+  #auth-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(3,7,18,.97);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .auth-box {
+    border: 1px solid var(--accent);
+    background: var(--surface);
+    padding: 40px;
+    width: 360px;
+    box-shadow: var(--glow);
+  }
+
+  .auth-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 18px;
+    color: var(--accent);
+    letter-spacing: 4px;
+    text-align: center;
+    margin-bottom: 28px;
+  }
+
+  .auth-box input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color .2s;
+  }
+
+  .auth-box input:focus { border-color: var(--accent); }
+
+  .btn {
+    width: 100%;
+    margin-top: 16px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'Orbitron', monospace;
+    font-size: 12px;
+    letter-spacing: 3px;
+    padding: 13px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+
+  .btn:hover {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: var(--glow);
+  }
+
+  .btn-danger {
+    border-color: var(--red);
+    color: var(--red);
+  }
+
+  .btn-danger:hover {
+    background: var(--red);
+    color: #fff;
+    box-shadow: 0 0 20px rgba(255,56,96,.4);
+  }
+
+  .btn-orbit {
+    border-color: var(--accent2);
+    color: var(--accent2);
+    font-size: 11px;
+    letter-spacing: 2px;
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-orbit:hover {
+    background: var(--accent2);
+    color: #fff;
+    box-shadow: var(--glow2);
+  }
+
+  .btn-orbit.loading::after {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; height: 3px; width: 0;
+    background: var(--accent2);
+    animation: load-bar 1.5s ease forwards;
+  }
+
+  @keyframes load-bar { to { width: 100%; } }
+
+  #auth-error {
+    color: var(--red);
+    font-size: 12px;
+    text-align: center;
+    min-height: 18px;
+  }
+
+  /* ── Grid layout ────────────────────────────────────────────── */
+  .dashboard {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px 24px;
+    position: relative;
+    transition: border-color .3s;
+  }
+
+  .card:hover { border-color: rgba(0,212,255,.25); }
+
+  .card-label {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .card-label::before {
+    content: '';
+    display: inline-block;
+    width: 20px; height: 1px;
+    background: var(--accent);
+    opacity: .5;
+  }
+
+  /* ── Health card ────────────────────────────────────────────── */
+  .col-4  { grid-column: span 4; }
+  .col-5  { grid-column: span 5; }
+  .col-6  { grid-column: span 6; }
+  .col-7  { grid-column: span 7; }
+  .col-8  { grid-column: span 8; }
+  .col-12 { grid-column: span 12; }
+
+  @media (max-width: 900px) {
+    .col-4,.col-5,.col-6,.col-7,.col-8 { grid-column: span 12; }
+  }
+
+  .health-ring {
+    width: 120px; height: 120px;
+    margin: 0 auto 16px;
+    position: relative;
+  }
+
+  .health-ring svg { transform: rotate(-90deg); }
+
+  .health-ring .ring-bg  { fill: none; stroke: var(--border); stroke-width: 8; }
+  .health-ring .ring-val { fill: none; stroke: var(--green);  stroke-width: 8;
+                           stroke-linecap: round;
+                           stroke-dasharray: 283;
+                           stroke-dashoffset: 283;
+                           transition: stroke-dashoffset 1s ease, stroke .5s; }
+
+  .health-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .health-pct {
+    font-family: 'Orbitron', monospace;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--green);
+    line-height: 1;
+    text-shadow: 0 0 12px var(--green);
+  }
+
+  .health-label { font-size: 9px; color: var(--dim); letter-spacing: 2px; }
+
+  /* ── DPI Gauge ──────────────────────────────────────────────── */
+  .dpi-gauge-wrap {
+    text-align: center;
+  }
+
+  .dpi-bar-bg {
+    height: 12px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 16px 0 8px;
+  }
+
+  .dpi-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--green), var(--yellow), var(--red));
+    border-radius: 2px;
+    transition: width 1s ease;
+  }
+
+  .dpi-score-num {
+    font-family: 'Orbitron', monospace;
+    font-size: 36px;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .dpi-status-text { font-size: 11px; color: var(--dim); margin-top: 6px; }
+
+  .dpi-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .dpi-stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 10px;
+    text-align: center;
+  }
+
+  .dpi-stat-val { font-family: 'Orbitron', monospace; font-size: 16px; color: var(--accent); }
+  .dpi-stat-lbl { font-size: 9px; color: var(--dim); margin-top: 3px; }
+
+  /* ── Connection info ────────────────────────────────────────── */
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .info-row:last-child { border-bottom: none; }
+  .info-key   { color: var(--dim); font-size: 11px; letter-spacing: 1px; }
+  .info-value { color: var(--accent); font-family: 'Share Tech Mono', monospace; }
+  .info-value.green { color: var(--green); }
+
+  /* ── Tabs ───────────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 2px; margin-bottom: 20px; }
+
+  .tab-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 2px;
+    padding: 8px 18px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+
+  .tab-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(0,212,255,.05);
+  }
+
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── VLESS link ─────────────────────────────────────────────── */
+  .link-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    font-size: 11px;
+    color: var(--green);
+    word-break: break-all;
+    line-height: 1.6;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: border-color .2s;
+    position: relative;
+  }
+
+  .link-box:hover { border-color: var(--green); }
+
+  .link-copy-hint {
+    position: absolute;
+    top: 6px; right: 10px;
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: 1px;
+  }
+
+  .copied-toast {
+    position: fixed;
+    bottom: 32px; right: 32px;
+    background: var(--green);
+    color: var(--bg);
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    padding: 12px 20px;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all .3s;
+    z-index: 200;
+  }
+
+  .copied-toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ── QR ─────────────────────────────────────────────────────── */
+  .qr-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 32px;
+    flex-wrap: wrap;
+    padding: 8px 0;
+  }
+
+  .qr-item { text-align: center; }
+
+  .qr-inner {
+    width: 160px; height: 160px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px;
+    padding: 8px;
+  }
+
+  .qr-inner canvas { width: 144px !important; height: 144px !important; }
+
+  .qr-tag {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--dim);
+  }
+
+  /* ── Logs ───────────────────────────────────────────────────── */
+  .log-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 14px;
+    font-size: 11px;
+    color: #4a9;
+    height: 260px;
+    overflow-y: auto;
+    line-height: 1.7;
+  }
+
+  .log-box .err { color: var(--red); }
+  .log-box .warn { color: var(--yellow); }
+
+  /* ── Orbit button ───────────────────────────────────────────── */
+  .orbit-section {
+    text-align: center;
+    padding: 8px 0;
+  }
+
+  .orbit-warn {
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 14px;
+    line-height: 1.6;
+  }
+
+  .orbit-result {
+    margin-top: 16px;
+    background: rgba(123,47,255,.1);
+    border: 1px solid var(--accent2);
+    padding: 14px;
+    font-size: 11px;
+    color: var(--accent2);
+    line-height: 1.8;
+    display: none;
+  }
+
+  /* ── Rotation countdown ─────────────────────────────────────── */
+  .next-rotation {
+    font-family: 'Orbitron', monospace;
+    font-size: 20px;
+    color: var(--yellow);
+    letter-spacing: 3px;
+    text-shadow: 0 0 12px rgba(255,221,87,.4);
+  }
+
+  /* ── Uptime / footer bar ────────────────────────────────────── */
+  .footer-bar {
+    margin-top: 32px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    display: flex;
+    gap: 32px;
+    font-size: 11px;
+    color: var(--dim);
+    flex-wrap: wrap;
+  }
+
+  .footer-bar span { color: var(--accent); }
+
+  /* ── Blink cursor ───────────────────────────────────────────── */
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ── Scrollbar ──────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════
+     AUTH OVERLAY
+════════════════════════════════════════════════════ -->
+<div id="auth-overlay">
+  <div class="auth-box">
+    <div class="auth-title">// ECLIPS AUTH</div>
+    <input id="auth-pass" type="password" placeholder="ВВЕДИТЕ ПАРОЛЬ" autocomplete="off">
+    <button class="btn" onclick="doAuth()">ВОЙТИ В СИСТЕМУ</button>
+    <div id="auth-error"></div>
+  </div>
+  <div style="font-size:11px;color:var(--dim);letter-spacing:2px;">ECLIPS v1.0 · CONTROL NODE<span class="blink">_</span></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     MAIN DASHBOARD
+════════════════════════════════════════════════════ -->
+<div id="main" style="display:none">
+<div class="container">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-dot"></div>
+      ECLIPS
+    </div>
+    <div class="header-meta">
+      <div>SERVER IP: <span id="server-ip">—</span></div>
+      <div>UTC: <span id="clock">—</span></div>
+      <div>UPTIME: <span id="uptime">—</span></div>
+    </div>
+  </header>
+
+  <!-- Dashboard grid -->
+  <div class="dashboard">
+
+    <!-- ── System Health ── -->
+    <div class="card col-4">
+      <div class="card-label">System Health</div>
+      <div class="health-ring">
+        <svg viewBox="0 0 100 100" width="120" height="120">
+          <circle class="ring-bg"  cx="50" cy="50" r="45"/>
+          <circle class="ring-val" cx="50" cy="50" r="45" id="health-ring"/>
+        </svg>
+        <div class="health-center">
+          <div class="health-pct" id="health-pct">—</div>
+          <div class="health-label">HEALTH</div>
+        </div>
+      </div>
+      <div style="text-align:center;font-size:12px;color:var(--dim);margin-top:4px;" id="health-text">Загрузка…</div>
+    </div>
+
+    <!-- ── DPI Alert Widget ── -->
+    <div class="card col-8">
+      <div class="card-label">DPI Interference Score</div>
+      <div class="dpi-gauge-wrap">
+        <div class="dpi-score-num" id="dpi-score" style="color:var(--green)">—</div>
+        <div class="dpi-bar-bg"><div class="dpi-bar-fill" id="dpi-bar"></div></div>
+        <div class="dpi-status-text" id="dpi-status-text">Измерение…</div>
+        <div class="dpi-details">
+          <div class="dpi-stat">
+            <div class="dpi-stat-val" id="dpi-blocked">—</div>
+            <div class="dpi-stat-lbl">ЗАБЛОК. САЙТЫ (мс)</div>
+          </div>
+          <div class="dpi-stat">
+            <div class="dpi-stat-val" id="dpi-direct">—</div>
+            <div class="dpi-stat-lbl">ПРЯМЫЕ САЙТЫ (мс)</div>
+          </div>
+          <div class="dpi-stat">
+            <div class="dpi-stat-val" id="dpi-timeouts">—</div>
+            <div class="dpi-stat-lbl">ТАЙМАУТЫ</div>
+          </div>
+          <div class="dpi-stat">
+            <div class="dpi-stat-val" id="dpi-updated">—</div>
+            <div class="dpi-stat-lbl">ОБНОВЛЕНО</div>
+          </div>
+        </div>
+        <button class="btn" style="margin-top:14px;font-size:10px;letter-spacing:2px;" onclick="refreshDPI()">↻ ОБНОВИТЬ DPI</button>
+      </div>
+    </div>
+
+    <!-- ── Connection Info ── -->
+    <div class="card col-5">
+      <div class="card-label">Параметры подключения</div>
+      <div class="info-row">
+        <div class="info-key">SNI</div>
+        <div class="info-value" id="info-sni">—</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">SHORT ID</div>
+        <div class="info-value" id="info-sid">—</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">PORT TCP</div>
+        <div class="info-value green">443</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">PORT gRPC</div>
+        <div class="info-value green">8443</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">СЛЕДУЮЩАЯ РОТАЦИЯ</div>
+        <div class="next-rotation" id="next-rotation">—</div>
+      </div>
+      <div class="info-row">
+        <div class="info-key">ПОСЛЕДНЯЯ РОТАЦИЯ</div>
+        <div class="info-value" id="info-rotated" style="font-size:11px">—</div>
+      </div>
+    </div>
+
+    <!-- ── Emergency Orbit ── -->
+    <div class="card col-7">
+      <div class="card-label">Экстренная орбита</div>
+      <div class="orbit-section">
+        <button class="btn btn-orbit" style="width:100%;font-size:13px;padding:20px;letter-spacing:4px;" id="orbit-btn" onclick="emergencyOrbit()">
+          🚀 EMERGENCY ORBIT
+        </button>
+        <div class="orbit-warn">
+          Немедленная смена всех ключей, ShortID и SNI.<br>
+          Все активные соединения будут переподключены автоматически.<br>
+          <span style="color:var(--yellow);">Используйте при обнаружении DPI-блокировки.</span>
+        </div>
+        <div class="orbit-result" id="orbit-result"></div>
+      </div>
+    </div>
+
+    <!-- ── VLESS Links + QR ── -->
+    <div class="card col-12">
+      <div class="card-label">VLESS Ссылки и QR-коды</div>
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('tcp')">TCP PORT 443</button>
+        <button class="tab-btn" onclick="switchTab('grpc')">gRPC PORT 8443</button>
+        <button class="tab-btn" onclick="switchTab('qr')">QR КОДЫ</button>
+      </div>
+
+      <div class="tab-pane active" id="tab-tcp">
+        <div class="link-box" id="link-tcp" onclick="copyLink('tcp')">
+          <span class="link-copy-hint">НАЖМИТЕ ДЛЯ КОПИРОВАНИЯ</span>
+          <span id="link-tcp-text">Загрузка…</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.8;margin-top:4px;">
+          ⚡ Протокол: VLESS + Reality (TCP) · Поток: xtls-rprx-vision · uTLS: Safari
+        </div>
+      </div>
+
+      <div class="tab-pane" id="tab-grpc">
+        <div class="link-box" id="link-grpc" onclick="copyLink('grpc')">
+          <span class="link-copy-hint">НАЖМИТЕ ДЛЯ КОПИРОВАНИЯ</span>
+          <span id="link-grpc-text">Загрузка…</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.8;margin-top:4px;">
+          ⚡ Протокол: VLESS + Reality (gRPC) · Режим: multiPath · uTLS: Chrome
+        </div>
+      </div>
+
+      <div class="tab-pane" id="tab-qr">
+        <div class="qr-wrap" id="qr-wrap">
+          <div class="qr-item">
+            <div class="qr-inner"><div id="qr-tcp"></div></div>
+            <div class="qr-tag">TCP · PORT 443</div>
+          </div>
+          <div class="qr-item">
+            <div class="qr-inner"><div id="qr-grpc"></div></div>
+            <div class="qr-tag">gRPC · PORT 8443</div>
+          </div>
+        </div>
+        <div style="text-align:center;font-size:11px;color:var(--dim);margin-top:8px;">
+          Отсканируйте в Shadowrocket / V2rayNG / NekoBox
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Logs ── -->
+    <div class="card col-12">
+      <div class="card-label" style="justify-content:space-between;display:flex;">
+        <span>Логи Xray</span>
+        <button class="tab-btn" onclick="loadLogs()" style="padding:4px 12px;font-size:9px;">↻ ОБНОВИТЬ</button>
+      </div>
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchLogTab('access')">ACCESS</button>
+        <button class="tab-btn" onclick="switchLogTab('error')">ERROR</button>
+      </div>
+      <div class="log-box" id="log-box">Загрузка логов…</div>
+    </div>
+
+  </div><!-- /dashboard -->
+
+  <div class="footer-bar">
+    <div>ECLIPS VPN · <span>v1.0.0</span></div>
+    <div>ENGINE: <span>Xray-core</span></div>
+    <div>PROTO: <span>VLESS+Reality</span></div>
+    <div>OBFS: <span>uTLS + TCP Fragmentation</span></div>
+    <div><span class="blink">●</span> ONLINE</div>
+  </div>
+
+</div><!-- /container -->
+</div><!-- /main -->
+
+<div class="copied-toast" id="toast">СКОПИРОВАНО</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth
+// ─────────────────────────────────────────────────────────────────────────────
+let AUTH_HEADER = '';
+
+function makeBasic(pass) {
+  return 'Basic ' + btoa('eclips:' + pass);
+}
+
+async function doAuth() {
+  const pass = document.getElementById('auth-pass').value.trim();
+  if (!pass) return;
+  const header = makeBasic(pass);
+  try {
+    const r = await fetch('/api/status', { headers: { Authorization: header } });
+    if (r.ok) {
+      AUTH_HEADER = header;
+      document.getElementById('auth-overlay').style.display = 'none';
+      document.getElementById('main').style.display = 'block';
+      initDashboard();
+    } else {
+      document.getElementById('auth-error').textContent = '// ДОСТУП ЗАПРЕЩЁН';
+    }
+  } catch(e) {
+    document.getElementById('auth-error').textContent = '// ОШИБКА СОЕДИНЕНИЯ';
+  }
+}
+
+document.getElementById('auth-pass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doAuth();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API calls
+// ─────────────────────────────────────────────────────────────────────────────
+async function api(path, method='GET') {
+  const r = await fetch(path, { method, headers: { Authorization: AUTH_HEADER } });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────────────────────
+function initDashboard() {
+  updateClock();
+  setInterval(updateClock, 1000);
+  loadStatus();
+  loadLinks();
+  loadLogs();
+  setInterval(loadStatus, 30000);
+  setInterval(loadLinks, 60000);
+}
+
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toUTCString().slice(17,25);
+}
+
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return (d > 0 ? d + 'd ' : '') + h + 'h ' + m + 'm';
+}
+
+async function loadStatus() {
+  try {
+    const s = await api('/api/status');
+    document.getElementById('server-ip').textContent = s.server_ip || '—';
+    document.getElementById('uptime').textContent = s.uptime_sec ? fmtUptime(s.uptime_sec) : '—';
+    document.getElementById('info-sni').textContent = s.sni || '—';
+    document.getElementById('info-sid').textContent = s.short_id || '—';
+    document.getElementById('info-rotated').textContent = s.rotated_at ? s.rotated_at.slice(0,19).replace('T',' ') : '—';
+
+    // Next rotation (assume 24h cycle from rotated_at)
+    if (s.rotated_at) {
+      const next = new Date(new Date(s.rotated_at).getTime() + 24*3600*1000);
+      const diff = Math.max(0, next - Date.now());
+      const hh = Math.floor(diff/3600000);
+      const mm = Math.floor((diff%3600000)/60000);
+      document.getElementById('next-rotation').textContent = hh + 'h ' + mm + 'm';
+    }
+
+    // Health score (inverse of DPI score)
+    updateDPI(s.dpi);
+
+    // Health ring
+    const score = s.dpi ? Math.max(0, 100 - s.dpi.score) : 100;
+    setHealthRing(score);
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function setHealthRing(pct) {
+  const ring = document.getElementById('health-ring');
+  const circumference = 283;
+  const offset = circumference - (pct / 100) * circumference;
+  ring.style.strokeDashoffset = offset;
+  const color = pct > 70 ? 'var(--green)' : pct > 40 ? 'var(--yellow)' : 'var(--red)';
+  ring.style.stroke = color;
+  document.getElementById('health-pct').textContent = pct + '%';
+  document.getElementById('health-pct').style.color = color;
+  const texts = ['КРИТИЧНО', 'УГРОЗА', 'НОРМА', 'ОТЛИЧНО', 'ИДЕАЛЬНО'];
+  const idx = Math.min(4, Math.floor(pct / 21));
+  document.getElementById('health-text').textContent = texts[idx];
+}
+
+function updateDPI(dpi) {
+  if (!dpi || !dpi.updated_at) return;
+  const score = dpi.score || 0;
+  const el = document.getElementById('dpi-score');
+  el.textContent = score;
+  el.style.color = score < 30 ? 'var(--green)' : score < 60 ? 'var(--yellow)' : 'var(--red)';
+  document.getElementById('dpi-bar').style.width = score + '%';
+
+  const statuses = ['ЧИСТО — DPI НЕ ОБНАРУЖЕН', 'СЛАБОЕ ВМЕШАТЕЛЬСТВО', 'УМЕРЕННОЕ ЗАМЕДЛЕНИЕ', 'СИЛЬНАЯ БЛОКИРОВКА'];
+  const idx = score < 25 ? 0 : score < 50 ? 1 : score < 75 ? 2 : 3;
+  document.getElementById('dpi-status-text').textContent = statuses[idx];
+
+  const det = dpi.details || {};
+  document.getElementById('dpi-blocked').textContent = det.avg_blocked_ms ? Math.round(det.avg_blocked_ms) : '—';
+  document.getElementById('dpi-direct').textContent  = det.avg_direct_ms  ? Math.round(det.avg_direct_ms)  : '—';
+  document.getElementById('dpi-timeouts').textContent = det.blocked_timeouts ?? '—';
+  document.getElementById('dpi-updated').textContent  = dpi.updated_at ? dpi.updated_at.slice(11,19) : '—';
+}
+
+async function refreshDPI() {
+  await api('/api/dpi/refresh', 'POST');
+  setTimeout(loadStatus, 3000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Links & QR
+// ─────────────────────────────────────────────────────────────────────────────
+let links = {};
+let qrRendered = false;
+
+async function loadLinks() {
+  try {
+    links = await api('/api/links');
+    document.getElementById('link-tcp-text').textContent  = links.tcp;
+    document.getElementById('link-grpc-text').textContent = links.grpc;
+    renderQR();
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function renderQR() {
+  if (!links.tcp) return;
+  ['tcp','grpc'].forEach(t => {
+    const el = document.getElementById('qr-' + t);
+    el.innerHTML = '';
+    new QRCode(el, {
+      text: links[t],
+      width: 144, height: 144,
+      colorDark: '#000000', colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  });
+}
+
+function copyLink(type) {
+  const text = links[type];
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => showToast());
+}
+
+function showToast() {
+  const t = document.getElementById('toast');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tabs
+// ─────────────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tabs .tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+let currentLogTab = 'access';
+let logsData = {};
+
+function switchLogTab(name) {
+  currentLogTab = name;
+  document.querySelectorAll('.tabs')[1].querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  renderLogs();
+}
+
+async function loadLogs() {
+  try {
+    logsData = await api('/api/logs?lines=80');
+    renderLogs();
+  } catch(e) {}
+}
+
+function renderLogs() {
+  const box = document.getElementById('log-box');
+  const lines = logsData[currentLogTab] || [];
+  if (!lines.length) { box.textContent = '// Нет записей'; return; }
+  box.innerHTML = lines.map(l => {
+    const cls = l.includes('[Error]') || l.includes('error') ? 'err'
+              : l.includes('[Warning]') ? 'warn' : '';
+    return `<div class="${cls}">${escHtml(l)}</div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Emergency Orbit
+// ─────────────────────────────────────────────────────────────────────────────
+async function emergencyOrbit() {
+  const btn = document.getElementById('orbit-btn');
+  const res = document.getElementById('orbit-result');
+  btn.classList.add('loading');
+  btn.disabled = true;
+  btn.textContent = '⏳ ВЫПОЛНЯЕТСЯ РОТАЦИЯ…';
+  res.style.display = 'none';
+
+  try {
+    const data = await api('/api/rotate', 'POST');
+    btn.textContent = '✅ ОРБИТА СМЕНЕНА';
+    res.style.display = 'block';
+    res.innerHTML = `
+      // РОТАЦИЯ ВЫПОЛНЕНА<br>
+      NEW_SNI      : ${data.new_sni}<br>
+      NEW_SHORT_ID : ${data.new_short_id}<br>
+      TIMESTAMP    : ${data.rotated_at}<br>
+    `;
+    links = { tcp: data.tcp_link, grpc: data.grpc_link };
+    document.getElementById('link-tcp-text').textContent  = data.tcp_link;
+    document.getElementById('link-grpc-text').textContent = data.grpc_link;
+    renderQR();
+    await loadStatus();
+
+    setTimeout(() => {
+      btn.textContent = '🚀 EMERGENCY ORBIT';
+      btn.disabled = false;
+      btn.classList.remove('loading');
+    }, 5000);
+  } catch(e) {
+    btn.textContent = '❌ ОШИБКА — ПОВТОР ЧЕРЕЗ 5с';
+    setTimeout(() => {
+      btn.textContent = '🚀 EMERGENCY ORBIT';
+      btn.disabled = false;
+      btn.classList.remove('loading');
+    }, 5000);
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+version: "3.9"
+
+networks:
+  eclips_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+volumes:
+  xray_logs:
+  xray_config:
+  backend_data:
+
+services:
+  # ─────────────────────────────────────────
+  #  Xray-core — hardened container
+  # ─────────────────────────────────────────
+  xray:
+    image: teddysun/xray:latest
+    container_name: eclips_xray
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    ports:
+      - "443:443/tcp"
+      - "8443:8443/tcp"
+    volumes:
+      - xray_config:/etc/xray:ro
+      - xray_logs:/var/log/xray
+    networks:
+      eclips_net:
+        ipv4_address: 172.20.0.2
+    environment:
+      - XRAY_LOCATION_CONFIG=/etc/xray
+    healthcheck:
+      test: ["CMD", "xray", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ─────────────────────────────────────────
+  #  FastAPI Backend
+  # ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: eclips_backend
+    restart: unless-stopped
+    depends_on:
+      - xray
+    ports:
+      - "8080:8080"
+    volumes:
+      - xray_config:/etc/xray
+      - xray_logs:/var/log/xray:ro
+      - backend_data:/app/data
+    networks:
+      eclips_net:
+        ipv4_address: 172.20.0.3
+    environment:
+      - ECLIPS_PASSWORD=${ECLIPS_PASSWORD:-changeme_strong_password}
+      - XRAY_CONFIG_PATH=/etc/xray/config.json
+      - XRAY_LOG_PATH=/var/log/xray
+      - SERVER_IP=${SERVER_IP:-0.0.0.0}
+      - PRIVATE_KEY=${PRIVATE_KEY}
+      - PUBLIC_KEY=${PUBLIC_KEY}
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────
+  #  Nginx — serves frontend + proxies API
+  # ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: eclips_nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      eclips_net:
+        ipv4_address: 172.20.0.4
