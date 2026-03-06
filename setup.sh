@@ -1,75 +1,80 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-#  ECLIPSE VPN — Установщик v1.1
-#  Ubuntu 22.04 / 24.04
-#  Запуск: sudo bash setup.sh
+#  ECLIPSE VPN — Установщик v1.2
+#  Ubuntu 22.04 / 24.04  |  sudo bash setup.sh
 # ═══════════════════════════════════════════════════════════════════════════════
-set -euo pipefail
+
+# НЕ используем set -e — обрабатываем ошибки вручную для лучшего контроля
+set -uo pipefail
 
 # ── Цвета ────────────────────────────────────────────────────────────────────
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
 C='\033[0;36m'; B='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 
-STEP=0
-ERRORS=()
 INSTALL_DIR="/opt/eclipse"
+LOG="/tmp/eclipse_install.log"
+ERRORS=()
+STEP=0
 
-# ── Утилиты вывода ────────────────────────────────────────────────────────────
+> "$LOG"
+
+# ── Утилиты ───────────────────────────────────────────────────────────────────
 step() {
   STEP=$((STEP+1))
   echo ""
   echo -e "${B}${C}╔═══════════════════════════════════════════════════╗${NC}"
-  printf "${B}${C}║  ШАГ %d: %-43s║${NC}\n" "$STEP" "$*"
+  printf  "${B}${C}║  ШАГ %d: %-43s║\n${NC}" "$STEP" "$*"
   echo -e "${B}${C}╚═══════════════════════════════════════════════════╝${NC}"
 }
-ok()   { echo -e "  ${G}✔${NC}  $*"; }
-info() { echo -e "  ${C}→${NC}  $*"; }
-warn() { echo -e "  ${Y}⚠${NC}  $*"; ERRORS+=("$*"); }
-fail() {
+ok()      { echo -e "  ${G}✔${NC}  $*"; }
+info()    { echo -e "  ${C}→${NC}  $*"; }
+warn()    { echo -e "  ${Y}⚠${NC}  $*"; ERRORS+=("$*"); }
+die() {
   echo ""
   echo -e "${R}${B}╔═══════════════════════════════════════════════════╗${NC}"
-  echo -e "${R}${B}║  ОШИБКА УСТАНОВКИ                                 ║${NC}"
+  echo -e "${R}${B}║  ОШИБКА — УСТАНОВКА ПРЕРВАНА                      ║${NC}"
   echo -e "${R}${B}╚═══════════════════════════════════════════════════╝${NC}"
   echo -e "  ${R}$*${NC}"
   echo ""
-  if [[ ${#ERRORS[@]} -gt 0 ]]; then
-    echo -e "${Y}Предупреждения во время установки:${NC}"
-    for e in "${ERRORS[@]}"; do echo -e "  ${Y}•${NC} $e"; done
-    echo ""
-  fi
-  echo -e "  ${DIM}Лог последней команды: /tmp/eclipse_install.log${NC}"
+  echo -e "  ${DIM}Полный лог: ${LOG}${NC}"
+  echo -e "  ${DIM}Последние строки:${NC}"
+  tail -30 "$LOG" 2>/dev/null | sed 's/^/    /'
   exit 1
 }
 
-# ── Спиннер ───────────────────────────────────────────────────────────────────
-spinner() {
-  local pid=$1 msg=$2
-  local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+# Спиннер для долгих операций
+spin_start() { _SPIN_MSG="$1"; _SPIN_PID=0; }
+run_spin() {
+  local msg="$1"; shift
+  local spins='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   local i=0
+  # Запускаем команду в фоне
+  "$@" >>"$LOG" 2>&1 &
+  local pid=$!
   tput civis 2>/dev/null || true
   while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${C}${spin:$((i % ${#spin})):1}${NC}  ${DIM}%-55s${NC}" "$msg…"
-    i=$((i+1)); sleep 0.1
+    printf "\r  ${C}${spins:$((i % ${#spins})):1}${NC}  ${DIM}%-56s${NC}" "$msg…"
+    i=$((i+1))
+    sleep 0.12
   done
   tput cnorm 2>/dev/null || true
-  printf "\r  ${G}✔${NC}  %-55s\n" "$msg"
-}
-
-run_silent() {
-  local msg="$1"; shift
-  "$@" >>/tmp/eclipse_install.log 2>&1 &
-  local pid=$!
-  spinner $pid "$msg"
-  if ! wait $pid; then
+  # Проверяем exit code
+  if wait "$pid"; then
+    printf "\r  ${G}✔${NC}  %-56s\n" "$msg"
+    return 0
+  else
+    printf "\r  ${R}✗${NC}  %-56s\n" "$msg"
     echo ""
-    echo -e "  ${R}✗  Не удалось: $msg${NC}"
+    echo -e "  ${R}Команда завершилась с ошибкой: $*${NC}"
     echo -e "  ${DIM}Последние строки лога:${NC}"
-    tail -20 /tmp/eclipse_install.log | sed 's/^/      /'
-    fail "Остановка из-за ошибки"
+    tail -25 "$LOG" | sed 's/^/      /'
+    echo ""
+    die "Не удалось выполнить: $msg"
   fi
 }
 
-# ── Баннер ────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# БАННЕР
 echo -e "${C}${B}"
 cat << 'BANNER'
 
@@ -79,122 +84,132 @@ cat << 'BANNER'
   ██╔══╝  ██║     ██║     ██║██╔═══╝ ╚════██║██╔══╝
   ███████╗╚██████╗███████╗██║██║     ███████║███████╗
   ╚══════╝ ╚═════╝╚══════╝╚═╝╚═╝     ╚══════╝╚══════╝
-
-           VPN INSTALLER v1.1
+           VPN INSTALLER v1.2
 
 BANNER
 echo -e "${NC}"
 
-> /tmp/eclipse_install.log  # очищаем лог
-
 # ════════════════════════════════════════════════════════════════════════════
 step "ПРОВЕРКА СИСТЕМЫ"
 
-[[ $EUID -ne 0 ]] && fail "Запустите скрипт от root:  sudo bash setup.sh"
+[[ $EUID -ne 0 ]] && die "Запустите от root:\n  sudo bash setup.sh"
 
-. /etc/os-release 2>/dev/null || true
+source /etc/os-release 2>/dev/null || true
 ok "ОС: ${PRETTY_NAME:-Unknown}"
+ok "Ядро: $(uname -r)"
 ok "Архитектура: $(uname -m)"
 ok "Директория установки: ${INSTALL_DIR}"
+ok "Лог: ${LOG}"
 
 # ════════════════════════════════════════════════════════════════════════════
 step "ВВОД ПАРАМЕТРОВ"
 
-# Определяем IP
-SERVER_IP=$(curl -s --max-time 6 https://api.ipify.org 2>/dev/null \
-         || curl -s --max-time 6 https://ifconfig.me 2>/dev/null \
-         || hostname -I 2>/dev/null | awk '{print $1}' \
-         || echo "")
+info "Определяем внешний IP…"
+SERVER_IP=""
+for url in "https://api.ipify.org" "https://ifconfig.me" "https://icanhazip.com"; do
+  SERVER_IP=$(curl -s --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]') || true
+  [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+  SERVER_IP=""
+done
+[[ -z "$SERVER_IP" ]] && SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}') || true
+[[ -z "$SERVER_IP" ]] && SERVER_IP="0.0.0.0"
 
-if [[ -n "$SERVER_IP" ]]; then
-  ok "Внешний IP определён: ${B}${SERVER_IP}${NC}"
-else
-  warn "Не удалось определить внешний IP"
-  SERVER_IP="YOUR_SERVER_IP"
-fi
-
+ok "IP сервера: ${B}${SERVER_IP}${NC}"
 echo ""
-read -rp "$(echo -e "  ${C}?${NC} IP или домен сервера [${B}${SERVER_IP}${NC}]: ")" _input
-SERVER_IP="${_input:-$SERVER_IP}"
-ok "Сервер: ${B}${SERVER_IP}${NC}"
+read -rp "$(echo -e "  ${C}?${NC} Введите IP или домен [${B}${SERVER_IP}${NC}]: ")" _inp
+SERVER_IP="${_inp:-$SERVER_IP}"
+ok "Используем: ${B}${SERVER_IP}${NC}"
 
 echo ""
 while true; do
-  read -rsp "$(echo -e "  ${C}?${NC} Придумайте пароль для веб-интерфейса (мин. 8 символов): ")" UI_PASSWORD
+  read -rsp "$(echo -e "  ${C}?${NC} Пароль для веб-интерфейса (мин. 8 символов): ")" PASS1
   echo ""
-  if [[ ${#UI_PASSWORD} -lt 8 ]]; then
-    echo -e "  ${R}✗  Слишком короткий — минимум 8 символов${NC}"; continue
+  if [[ ${#PASS1} -lt 8 ]]; then
+    echo -e "  ${R}✗  Слишком короткий${NC}"; continue
   fi
-  read -rsp "$(echo -e "  ${C}?${NC} Повторите пароль: ")" UI_PASSWORD2
+  read -rsp "$(echo -e "  ${C}?${NC} Повторите пароль: ")" PASS2
   echo ""
-  [[ "$UI_PASSWORD" == "$UI_PASSWORD2" ]] && { ok "Пароль принят"; break; }
-  echo -e "  ${R}✗  Пароли не совпадают${NC}"
+  if [[ "$PASS1" == "$PASS2" ]]; then
+    UI_PASSWORD="$PASS1"
+    ok "Пароль принят"
+    break
+  fi
+  echo -e "  ${R}✗  Не совпадают — попробуйте ещё раз${NC}"
 done
 
 # ════════════════════════════════════════════════════════════════════════════
 step "УСТАНОВКА ПАКЕТОВ"
 
-run_silent "Обновление apt" apt-get update -qq
-run_silent "Установка базовых пакетов" \
-  apt-get install -y -qq curl wget git unzip ufw ca-certificates \
-    gnupg lsb-release software-properties-common
+run_spin "Обновление apt" apt-get update -qq
+run_spin "Базовые пакеты" apt-get install -y -qq \
+  curl wget git unzip ufw ca-certificates gnupg lsb-release software-properties-common
 
 # ════════════════════════════════════════════════════════════════════════════
 step "УСТАНОВКА DOCKER"
 
 if command -v docker &>/dev/null; then
-  ok "Docker уже установлен: $(docker --version | awk '{print $3}' | tr -d ',')"
+  DOCKER_VER=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
+  ok "Docker уже установлен: ${DOCKER_VER}"
 else
-  run_silent "Добавление GPG-ключа Docker" bash -c '
+  run_spin "Добавление GPG-ключа Docker" bash -c '
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
     chmod a+r /etc/apt/keyrings/docker.gpg'
 
-  run_silent "Добавление репозитория Docker" bash -c '
-    . /etc/os-release
+  run_spin "Добавление репозитория Docker" bash -c '
+    source /etc/os-release
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
       https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
       > /etc/apt/sources.list.d/docker.list
     apt-get update -qq'
 
-  run_silent "Установка Docker CE" \
+  run_spin "Установка Docker CE" \
     apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-  systemctl enable docker >>/tmp/eclipse_install.log 2>&1
-  systemctl start  docker >>/tmp/eclipse_install.log 2>&1
-  ok "Docker установлен: $(docker --version | awk '{print $3}' | tr -d ',')"
+  systemctl enable docker >> "$LOG" 2>&1 || true
+  systemctl start  docker >> "$LOG" 2>&1 || true
+  ok "Docker установлен"
 fi
 
-if docker compose version &>/dev/null; then
-  ok "Docker Compose: $(docker compose version 2>/dev/null | awk '{print $4}' || echo 'v2')"
+if docker compose version >> "$LOG" 2>&1; then
+  ok "Docker Compose: v2 ✔"
 else
-  run_silent "Установка docker-compose-plugin" apt-get install -y -qq docker-compose-plugin
-  ok "Docker Compose установлен"
+  run_spin "Установка docker-compose-plugin" apt-get install -y -qq docker-compose-plugin
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
-step "ГЕНЕРАЦИЯ X25519 КЛЮЧЕЙ (Xray)"
+step "ГЕНЕРАЦИЯ X25519 КЛЮЧЕЙ"
 
+# Ищем xray
 XRAY_BIN=""
-for candidate in xray /usr/local/bin/xray; do
-  command -v "$candidate" &>/dev/null && { XRAY_BIN="$candidate"; break; }
+for candidate in xray /usr/local/bin/xray /usr/bin/xray; do
+  if command -v "$candidate" &>/dev/null 2>&1; then
+    XRAY_BIN="$candidate"
+    break
+  fi
 done
 
 if [[ -z "$XRAY_BIN" ]]; then
+  info "Скачиваем xray binary…"
   ARCH=$(uname -m)
-  [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]] && XARCH="arm64-v8a" || XARCH="64"
+  case "$ARCH" in
+    aarch64|arm64) XARCH="arm64-v8a" ;;
+    armv7*)        XARCH="arm32-v7a" ;;
+    *)             XARCH="64" ;;
+  esac
 
+  # Получаем версию без падения
   XRAY_VER=$(curl -s --max-time 10 \
-    https://api.github.com/repos/XTLS/Xray-core/releases/latest \
-    | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "v24.9.30")
-  info "Xray версия: ${XRAY_VER}"
+    "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null \
+    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' || true)
+  [[ -z "$XRAY_VER" ]] && XRAY_VER="v24.9.30"
+  info "Версия xray: ${XRAY_VER}"
 
-  run_silent "Скачивание Xray-core ${XRAY_VER}" \
-    wget -q "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-${XARCH}.zip" \
-      -O /tmp/xray.zip
+  XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-${XARCH}.zip"
 
-  run_silent "Распаковка Xray" bash -c '
+  run_spin "Скачивание xray ${XRAY_VER}" wget -q "$XRAY_URL" -O /tmp/xray.zip
+  run_spin "Распаковка xray" bash -c '
     unzip -qo /tmp/xray.zip xray -d /usr/local/bin/
     chmod +x /usr/local/bin/xray
     rm -f /tmp/xray.zip'
@@ -203,71 +218,88 @@ if [[ -z "$XRAY_BIN" ]]; then
 fi
 
 ok "Xray binary: ${XRAY_BIN}"
+echo -n "  ${C}→${NC}  Генерация ключей… "
 
-KEY_OUTPUT=$($XRAY_BIN x25519 2>/dev/null) \
-  || fail "Не удалось сгенерировать X25519 ключи"
+# Запускаем x25519 и сохраняем вывод (без 2>/dev/null чтобы видеть ошибки)
+KEY_RAW=$("$XRAY_BIN" x25519 2>>"$LOG") || {
+  echo -e "${R}ОШИБКА${NC}"
+  die "xray x25519 завершился с ошибкой. Лог: $LOG"
+}
 
-PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep -i "private" | awk '{print $NF}')
-PUBLIC_KEY=$(echo  "$KEY_OUTPUT" | grep -i "public"  | awk '{print $NF}')
+echo -e "${G}OK${NC}"
+echo "xray x25519 output: $KEY_RAW" >> "$LOG"
 
-[[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]] \
-  && fail "Ошибка парсинга ключей. Вывод:\n$KEY_OUTPUT"
+# Парсим — поддерживаем разные форматы вывода разных версий xray
+PRIVATE_KEY=$(echo "$KEY_RAW" | grep -i "private" | grep -oE '[A-Za-z0-9+/=_-]{40,}' | head -1 || true)
+PUBLIC_KEY=$(echo  "$KEY_RAW" | grep -i "public"  | grep -oE '[A-Za-z0-9+/=_-]{40,}' | head -1 || true)
 
-ok "Private Key: ${B}${PRIVATE_KEY:0:14}…${NC}  (сохранён в .env)"
+# Fallback: просто берём строки по порядку
+if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
+  PRIVATE_KEY=$(echo "$KEY_RAW" | awk 'NR==1{print $NF}')
+  PUBLIC_KEY=$(echo  "$KEY_RAW" | awk 'NR==2{print $NF}')
+fi
+
+if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
+  die "Не удалось распарсить ключи.\nВывод xray x25519:\n${KEY_RAW}"
+fi
+
+ok "Private Key: ${B}${PRIVATE_KEY:0:16}…${NC}"
 ok "Public Key:  ${B}${PUBLIC_KEY}${NC}"
 
 # ════════════════════════════════════════════════════════════════════════════
-step "НАСТРОЙКА FIREWALL"
+step "НАСТРОЙКА FIREWALL (UFW)"
 
-ufw --force reset    >>/tmp/eclipse_install.log 2>&1
-ufw default deny incoming  >>/tmp/eclipse_install.log 2>&1
-ufw default allow outgoing >>/tmp/eclipse_install.log 2>&1
-for port in 22 80 443 8080 8443; do
-  ufw allow $port/tcp >>/tmp/eclipse_install.log 2>&1
+ufw --force reset         >> "$LOG" 2>&1 || true
+ufw default deny incoming >> "$LOG" 2>&1 || true
+ufw default allow outgoing >> "$LOG" 2>&1 || true
+for p in 22 80 443 8080 8443; do
+  ufw allow "${p}/tcp"    >> "$LOG" 2>&1 || true
+  ok "Порт ${p}/tcp — разрешён"
 done
-ufw --force enable >>/tmp/eclipse_install.log 2>&1
-
-ok "Порты открыты: 22 (SSH)  80 (Web UI)  443 (VLESS/TCP)  8443 (VLESS/gRPC)  8080 (API)"
+ufw --force enable        >> "$LOG" 2>&1 || true
+ok "UFW включён"
 
 # ════════════════════════════════════════════════════════════════════════════
 step "ПОДГОТОВКА ФАЙЛОВ ПРОЕКТА"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-info "Копируем файлы из: ${SCRIPT_DIR}"
+info "Источник файлов: ${SCRIPT_DIR}"
+info "Назначение: ${INSTALL_DIR}"
 
-mkdir -p "${INSTALL_DIR}"/{backend,frontend,nginx,data,xray_logs}
+mkdir -p "${INSTALL_DIR}"/{backend,frontend,nginx,data,xray_config,xray_logs}
 
-REQUIRED_FILES=(
-  "docker-compose.yml"
-  "backend/main.py"
-  "backend/Dockerfile"
-  "backend/requirements.txt"
-  "frontend/index.html"
+# Копируем все файлы проекта
+COPY_OK=true
+for f in \
+  "docker-compose.yml" \
+  "backend/main.py" \
+  "backend/Dockerfile" \
+  "backend/requirements.txt" \
+  "frontend/index.html" \
   "nginx/nginx.conf"
-)
-
-ALL_PRESENT=true
-for f in "${REQUIRED_FILES[@]}"; do
-  src="${SCRIPT_DIR}/${f}"
-  dst="${INSTALL_DIR}/${f}"
-  mkdir -p "$(dirname "$dst")"
-  if [[ -f "$src" ]]; then
-    cp "$src" "$dst"
+do
+  SRC="${SCRIPT_DIR}/${f}"
+  DST="${INSTALL_DIR}/${f}"
+  mkdir -p "$(dirname "$DST")"
+  if [[ -f "$SRC" ]]; then
+    cp "$SRC" "$DST"
     ok "Скопирован: ${f}"
   else
-    warn "Не найден: ${f}"
-    ALL_PRESENT=false
+    warn "Файл не найден: ${f}"
+    COPY_OK=false
   fi
 done
 
-[[ "$ALL_PRESENT" == "false" ]] && warn "Некоторые файлы отсутствуют — убедитесь что setup.sh запущен из папки проекта Eclipse"
+[[ "$COPY_OK" == "false" ]] && warn "Некоторые файлы отсутствуют. Запустите setup.sh из папки проекта!"
 
-# Создаём начальный пустой конфиг xray чтобы volume монтировался нормально
-mkdir -p "${INSTALL_DIR}/xray_config"
-[[ ! -f "${INSTALL_DIR}/xray_config/config.json" ]] && echo '{}' > "${INSTALL_DIR}/xray_config/config.json"
+# Начальный конфиг xray
+cat > "${INSTALL_DIR}/xray_config/config.json" << 'XCFG'
+{"log":{"loglevel":"warning"},"inbounds":[],"outbounds":[{"protocol":"freedom"}]}
+XCFG
+ok "Начальный xray config создан"
 
 # ════════════════════════════════════════════════════════════════════════════
-step "СОЗДАНИЕ .env ФАЙЛА"
+step "СОЗДАНИЕ .env"
 
 cat > "${INSTALL_DIR}/.env" << ENVEOF
 ECLIPS_PASSWORD=${UI_PASSWORD}
@@ -277,145 +309,150 @@ PUBLIC_KEY=${PUBLIC_KEY}
 DATA_PATH=/app/data
 ENVEOF
 chmod 600 "${INSTALL_DIR}/.env"
-
-ok "Файл .env создан: ${INSTALL_DIR}/.env  (права 600)"
+ok ".env создан → ${INSTALL_DIR}/.env  (права 600)"
 
 # ════════════════════════════════════════════════════════════════════════════
 step "ЗАПУСК DOCKER СТЕКА"
 
 cd "${INSTALL_DIR}"
 
-# Останавливаем если уже запущено
-docker compose down >>/tmp/eclipse_install.log 2>&1 || true
+# Останавливаем старое если есть
+info "Останавливаем предыдущий стек (если был)…"
+docker compose down --remove-orphans >> "$LOG" 2>&1 || true
 
-run_silent "Загрузка образа teddysun/xray"  docker pull teddysun/xray:latest
-run_silent "Загрузка образа nginx:alpine"   docker pull nginx:alpine
-run_silent "Загрузка образа python:3.12-slim" docker pull python:3.12-slim
+run_spin "Pull: teddysun/xray"      docker pull teddysun/xray:latest
+run_spin "Pull: nginx:alpine"       docker pull nginx:alpine
+run_spin "Pull: python:3.12-slim"   docker pull python:3.12-slim
 
-run_silent "Сборка backend контейнера" \
-  docker compose --env-file .env build --no-cache
+run_spin "Build: backend контейнер" docker compose --env-file .env build --no-cache
 
-info "Поднимаем контейнеры…"
-docker compose --env-file .env up -d >>/tmp/eclipse_install.log 2>&1
-ok "Команда docker compose up выполнена"
+info "Запускаем контейнеры…"
+if docker compose --env-file .env up -d >> "$LOG" 2>&1; then
+  ok "docker compose up — выполнено"
+else
+  echo -e "\n${R}  Ошибка docker compose up:${NC}"
+  tail -30 "$LOG" | sed 's/^/    /'
+  die "Не удалось запустить стек"
+fi
 
 # ════════════════════════════════════════════════════════════════════════════
-step "ОЖИДАНИЕ И ПРОВЕРКА ЗАПУСКА"
+step "ПРОВЕРКА ЗАПУСКА (до 90 секунд)"
 
 echo ""
-info "Проверяем готовность сервисов (до 90 секунд)…"
-echo ""
+ALL_OK=false
 
-declare -A SVC_STATUS=(
-  [eclips_xray]=false
-  [eclips_backend]=false
-  [eclips_nginx]=false
-)
-API_OK=false
-WEB_OK=false
-
-for i in $(seq 1 18); do
+for attempt in $(seq 1 18); do
   sleep 5
+  SECS=$((attempt * 5))
 
-  for c in eclips_xray eclips_backend eclips_nginx; do
-    ST=$(docker inspect --format='{{.State.Status}}' "$c" 2>/dev/null || echo "—")
-    [[ "$ST" == "running" ]] && SVC_STATUS[$c]=true
-  done
+  # Статусы контейнеров
+  ST_XRAY=$(docker inspect --format='{{.State.Status}}' eclips_xray    2>/dev/null || echo "—")
+  ST_BACK=$(docker inspect --format='{{.State.Status}}' eclips_backend 2>/dev/null || echo "—")
+  ST_NGX=$(docker inspect --format='{{.State.Status}}'  eclips_nginx   2>/dev/null || echo "—")
 
-  HTTP_API=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
-    http://localhost:8080/health 2>/dev/null || echo "—")
-  HTTP_WEB=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
-    http://localhost/ 2>/dev/null || echo "—")
+  # HTTP-проверки
+  HTTP_API=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:8080/health 2>/dev/null || echo "—")
+  HTTP_WEB=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1/          2>/dev/null || echo "—")
 
-  [[ "$HTTP_API" == "200" ]] && API_OK=true
-  [[ "$HTTP_WEB" == "200" ]] && WEB_OK=true
+  # Иконки
+  icon() { [[ "$1" == "running" || "$1" == "200" ]] && echo -e "${G}✔${NC}" || echo -e "${Y}${1}${NC}"; }
 
-  # Красивая строка прогресса
-  xray_icon="${SVC_STATUS[eclips_xray]}" && [[ "$xray_icon" == "true" ]] && xi="${G}✔${NC}" || xi="${Y}…${NC}"
-  back_icon="${SVC_STATUS[eclips_backend]}" && [[ "$back_icon" == "true" ]] && bi="${G}✔${NC}" || bi="${Y}…${NC}"
-  ngnx_icon="${SVC_STATUS[eclips_nginx]}" && [[ "$ngnx_icon" == "true" ]] && ni="${G}✔${NC}" || ni="${Y}…${NC}"
-  [[ "$API_OK" == "true" ]] && ai="${G}✔ 200${NC}" || ai="${Y}${HTTP_API}${NC}"
-  [[ "$WEB_OK" == "true" ]] && wi="${G}✔ 200${NC}" || wi="${Y}${HTTP_WEB}${NC}"
+  printf "  ${DIM}[%3ds]${NC}  xray=%-3b  backend=%-3b  nginx=%-3b  api=${HTTP_API}  web=${HTTP_WEB}\n" \
+    "$SECS" "$(icon $ST_XRAY)" "$(icon $ST_BACK)" "$(icon $ST_NGX)"
 
-  printf "  [%2ds]  xray %b  backend %b  nginx %b  api %b  web %b\n" \
-    $((i*5)) "$xi" "$bi" "$ni" "$ai" "$wi"
-
-  if ${SVC_STATUS[eclips_xray]} && ${SVC_STATUS[eclips_backend]} && \
-     ${SVC_STATUS[eclips_nginx]} && $API_OK && $WEB_OK; then
-    echo ""
-    ok "${G}${B}Все сервисы запущены и отвечают!${NC}"
+  if [[ "$ST_XRAY" == "running" && "$ST_BACK" == "running" && \
+        "$ST_NGX"  == "running" && "$HTTP_API" == "200" && "$HTTP_WEB" == "200" ]]; then
+    ALL_OK=true
     break
   fi
 done
 
 echo ""
 
-# Финальный отчёт
-echo -e "  ${B}Итоговый статус:${NC}"
-for c in eclips_xray eclips_backend eclips_nginx; do
-  ST=$(docker inspect --format='{{.State.Status}}' "$c" 2>/dev/null || echo "не найден")
-  LABEL="${c/eclips_/}"
-  if [[ "$ST" == "running" ]]; then
-    ok "${LABEL}: ${G}${B}RUNNING${NC}"
+# Итоговый статус каждого контейнера
+check_svc() {
+  local label="$1" name="$2"
+  local st
+  st=$(docker inspect --format='{{.State.Status}}' "$name" 2>/dev/null || echo "не найден")
+  if [[ "$st" == "running" ]]; then
+    ok "${label}: ${G}${B}RUNNING${NC}"
   else
-    warn "${LABEL}: ${R}${B}${ST}${NC}"
-    echo -e "  ${DIM}  Логи ${c} (последние 20 строк):${NC}"
-    docker logs --tail 20 "$c" 2>&1 | sed 's/^/      /' || true
+    warn "${label}: ${R}${B}${st}${NC}"
+    echo -e "  ${DIM}  Логи ${name}:${NC}"
+    docker logs --tail 25 "$name" 2>&1 | sed 's/^/      /' || true
   fi
-done
+}
 
-$API_OK && ok "Backend API: ${G}${B}HTTP 200${NC}" || warn "Backend API не отвечает — попробуйте через минуту"
-$WEB_OK && ok "Веб-интерфейс: ${G}${B}HTTP 200${NC}" || warn "Nginx не отвечает — попробуйте через минуту"
+check_svc "Xray-core"       "eclips_xray"
+check_svc "FastAPI Backend" "eclips_backend"
+check_svc "Nginx"           "eclips_nginx"
+
+F_API=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8080/health 2>/dev/null || echo "—")
+F_WEB=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1/ 2>/dev/null || echo "—")
+
+[[ "$F_API" == "200" ]] && ok "API /health: ${G}${B}HTTP 200${NC}" \
+  || warn "API /health: HTTP ${F_API} (стартует, подождите минуту)"
+[[ "$F_WEB" == "200" ]] && ok "Веб-интерфейс: ${G}${B}HTTP 200${NC}" \
+  || warn "Веб-интерфейс: HTTP ${F_WEB} (проверьте nginx)"
 
 # ════════════════════════════════════════════════════════════════════════════
 # ФИНАЛЬНАЯ ИНСТРУКЦИЯ
 # ════════════════════════════════════════════════════════════════════════════
+echo ""
+if $ALL_OK; then
+  echo -e "${G}${B}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${G}${B}║              ✅  ECLIPSE VPN УСТАНОВЛЕН!                  ║${NC}"
+  echo -e "${G}${B}╚═══════════════════════════════════════════════════════════╝${NC}"
+else
+  echo -e "${Y}${B}╔═══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${Y}${B}║     ⚠  УСТАНОВКА ЗАВЕРШЕНА С ПРЕДУПРЕЖДЕНИЯМИ             ║${NC}"
+  echo -e "${Y}${B}╚═══════════════════════════════════════════════════════════╝${NC}"
+  warn "Некоторые сервисы не ответили за 90 сек — попробуйте проверить через минуту"
+fi
 
 echo ""
-echo ""
-echo -e "${G}${B}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${G}${B}║              ✅  ECLIPSE VPN УСТАНОВЛЕН                   ║${NC}"
-echo -e "${G}${B}╚═══════════════════════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "${B}${Y}  ┌─────────────────────────────────────────────────────┐${NC}"
-echo -e "${B}${Y}  │              КАК ЗАЙТИ В ВЕБ-ИНТЕРФЕЙС              │${NC}"
-echo -e "${B}${Y}  └─────────────────────────────────────────────────────┘${NC}"
+echo -e "${B}${Y}  ┌──────────────────────────────────────────────────────┐${NC}"
+echo -e "${B}${Y}  │             КАК ЗАЙТИ В ВЕБ-ИНТЕРФЕЙС               │${NC}"
+echo -e "${B}${Y}  └──────────────────────────────────────────────────────┘${NC}"
 echo ""
 echo -e "  Откройте в браузере:"
 echo ""
-echo -e "  ${B}${C}  ➜  http://${SERVER_IP}/${NC}"
+echo -e "  ${B}${C}     ➜  http://${SERVER_IP}/${NC}"
 echo ""
 echo -e "  Логин:   ${B}eclips${NC}"
-echo -e "  Пароль:  ${B}[указанный вами при установке]${NC}"
+echo -e "  Пароль:  ${B}[указанный при установке]${NC}"
 echo ""
-echo -e "${B}  ┌─────────────────────────────────────────────────────┐${NC}"
-echo -e "${B}  │            ПАРАМЕТРЫ VPN ПОДКЛЮЧЕНИЯ                │${NC}"
-echo -e "${B}  └─────────────────────────────────────────────────────┘${NC}"
+echo -e "${B}  ┌──────────────────────────────────────────────────────┐${NC}"
+echo -e "${B}  │              ПАРАМЕТРЫ VPN                           │${NC}"
+echo -e "${B}  └──────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "  Сервер:         ${C}${SERVER_IP}${NC}"
-echo -e "  TCP порт 443:   ${C}VLESS + Reality  (xtls-rprx-vision, uTLS Safari)${NC}"
-echo -e "  gRPC порт 8443: ${C}VLESS + Reality  (multiPath, uTLS Chrome)${NC}"
-echo -e "  Public Key:     ${C}${PUBLIC_KEY}${NC}"
+echo -e "  Протокол:  VLESS + Reality"
+echo -e "  Сервер:    ${C}${SERVER_IP}${NC}"
+echo -e "  TCP:       ${C}порт 443${NC}   (xtls-rprx-vision, uTLS Safari)"
+echo -e "  gRPC:      ${C}порт 8443${NC}  (multiPath, uTLS Chrome)"
+echo -e "  PublicKey: ${C}${PUBLIC_KEY}${NC}"
 echo ""
-echo -e "  ${DIM}QR-коды и готовые VLESS-ссылки — в веб-интерфейсе${NC}"
+echo -e "  ${DIM}QR-коды и VLESS-ссылки → в веб-интерфейсе${NC}"
 echo ""
-echo -e "${B}  ┌─────────────────────────────────────────────────────┐${NC}"
-echo -e "${B}  │                 УПРАВЛЕНИЕ СТЕКОМ                   │${NC}"
-echo -e "${B}  └─────────────────────────────────────────────────────┘${NC}"
+echo -e "${B}  ┌──────────────────────────────────────────────────────┐${NC}"
+echo -e "${B}  │              УПРАВЛЕНИЕ СТЕКОМ                       │${NC}"
+echo -e "${B}  └──────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "  Статус:      ${C}cd ${INSTALL_DIR} && docker compose ps${NC}"
-echo -e "  Логи live:   ${C}cd ${INSTALL_DIR} && docker compose logs -f${NC}"
-echo -e "  Перезапуск:  ${C}cd ${INSTALL_DIR} && docker compose restart${NC}"
-echo -e "  Остановить:  ${C}cd ${INSTALL_DIR} && docker compose down${NC}"
+echo -e "  ${C}cd ${INSTALL_DIR}${NC}"
 echo ""
-echo -e "  Ключи и пароль: ${C}cat ${INSTALL_DIR}/.env${NC}"
-echo -e "  Лог установки:  ${C}cat /tmp/eclipse_install.log${NC}"
+echo -e "  Статус:     ${C}docker compose ps${NC}"
+echo -e "  Логи live:  ${C}docker compose logs -f${NC}"
+echo -e "  Перезапуск: ${C}docker compose restart${NC}"
+echo -e "  Остановить: ${C}docker compose down${NC}"
+echo ""
+echo -e "  Ключи/пароль: ${C}cat ${INSTALL_DIR}/.env${NC}"
+echo -e "  Лог установки: ${C}cat ${LOG}${NC}"
 echo ""
 
 if [[ ${#ERRORS[@]} -gt 0 ]]; then
-  echo -e "${Y}${B}  ┌─────────────────────────────────────────────────────┐${NC}"
-  echo -e "${Y}${B}  │    ⚠  ПРЕДУПРЕЖДЕНИЯ (изучите при проблемах)        │${NC}"
-  echo -e "${Y}${B}  └─────────────────────────────────────────────────────┘${NC}"
+  echo -e "${Y}${B}  ┌──────────────────────────────────────────────────────┐${NC}"
+  echo -e "${Y}${B}  │    ⚠  ПРЕДУПРЕЖДЕНИЯ                                 │${NC}"
+  echo -e "${Y}${B}  └──────────────────────────────────────────────────────┘${NC}"
   for e in "${ERRORS[@]}"; do echo -e "  ${Y}•${NC} $e"; done
   echo ""
 fi
