@@ -1,201 +1,424 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-#  ECLIPS VPN — One-Line Installer
-#  Поддерживаемые ОС: Ubuntu 22.04 / 24.04
-#  Использование:   bash setup.sh
+#  ECLIPSE VPN — Установщик v1.1
+#  Ubuntu 22.04 / 24.04
+#  Запуск: sudo bash setup.sh
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+# ── Цвета ────────────────────────────────────────────────────────────────────
+R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
+C='\033[0;36m'; B='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 
-log()  { echo -e "${GREEN}[✓]${NC} $*"; }
-warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-err()  { echo -e "${RED}[✗]${NC} $*"; exit 1; }
-info() { echo -e "${CYAN}[→]${NC} $*"; }
+STEP=0
+ERRORS=()
+INSTALL_DIR="/opt/eclipse"
 
-echo -e "${BOLD}${CYAN}"
-cat << 'EOF'
-  ███████╗ ██████╗██╗     ██╗██████╗ ███████╗
-  ██╔════╝██╔════╝██║     ██║██╔══██╗██╔════╝
-  █████╗  ██║     ██║     ██║██████╔╝███████╗
-  ██╔══╝  ██║     ██║     ██║██╔═══╝ ╚════██║
-  ███████╗╚██████╗███████╗██║██║     ███████║
-  ╚══════╝ ╚═════╝╚══════╝╚═╝╚═╝     ╚══════╝
-          VPN INSTALLER v1.0
-EOF
+# ── Утилиты вывода ────────────────────────────────────────────────────────────
+step() {
+  STEP=$((STEP+1))
+  echo ""
+  echo -e "${B}${C}╔═══════════════════════════════════════════════════╗${NC}"
+  printf "${B}${C}║  ШАГ %d: %-43s║${NC}\n" "$STEP" "$*"
+  echo -e "${B}${C}╚═══════════════════════════════════════════════════╝${NC}"
+}
+ok()   { echo -e "  ${G}✔${NC}  $*"; }
+info() { echo -e "  ${C}→${NC}  $*"; }
+warn() { echo -e "  ${Y}⚠${NC}  $*"; ERRORS+=("$*"); }
+fail() {
+  echo ""
+  echo -e "${R}${B}╔═══════════════════════════════════════════════════╗${NC}"
+  echo -e "${R}${B}║  ОШИБКА УСТАНОВКИ                                 ║${NC}"
+  echo -e "${R}${B}╚═══════════════════════════════════════════════════╝${NC}"
+  echo -e "  ${R}$*${NC}"
+  echo ""
+  if [[ ${#ERRORS[@]} -gt 0 ]]; then
+    echo -e "${Y}Предупреждения во время установки:${NC}"
+    for e in "${ERRORS[@]}"; do echo -e "  ${Y}•${NC} $e"; done
+    echo ""
+  fi
+  echo -e "  ${DIM}Лог последней команды: /tmp/eclipse_install.log${NC}"
+  exit 1
+}
+
+# ── Спиннер ───────────────────────────────────────────────────────────────────
+spinner() {
+  local pid=$1 msg=$2
+  local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local i=0
+  tput civis 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r  ${C}${spin:$((i % ${#spin})):1}${NC}  ${DIM}%-55s${NC}" "$msg…"
+    i=$((i+1)); sleep 0.1
+  done
+  tput cnorm 2>/dev/null || true
+  printf "\r  ${G}✔${NC}  %-55s\n" "$msg"
+}
+
+run_silent() {
+  local msg="$1"; shift
+  "$@" >>/tmp/eclipse_install.log 2>&1 &
+  local pid=$!
+  spinner $pid "$msg"
+  if ! wait $pid; then
+    echo ""
+    echo -e "  ${R}✗  Не удалось: $msg${NC}"
+    echo -e "  ${DIM}Последние строки лога:${NC}"
+    tail -20 /tmp/eclipse_install.log | sed 's/^/      /'
+    fail "Остановка из-за ошибки"
+  fi
+}
+
+# ── Баннер ────────────────────────────────────────────────────────────────────
+echo -e "${C}${B}"
+cat << 'BANNER'
+
+  ███████╗ ██████╗██╗     ██╗██████╗ ███████╗███████╗
+  ██╔════╝██╔════╝██║     ██║██╔══██╗██╔════╝██╔════╝
+  █████╗  ██║     ██║     ██║██████╔╝███████╗█████╗
+  ██╔══╝  ██║     ██║     ██║██╔═══╝ ╚════██║██╔══╝
+  ███████╗╚██████╗███████╗██║██║     ███████║███████╗
+  ╚══════╝ ╚═════╝╚══════╝╚═╝╚═╝     ╚══════╝╚══════╝
+
+           VPN INSTALLER v1.1
+
+BANNER
 echo -e "${NC}"
 
-# ── Root check ──────────────────────────────────────────────────────────────
-[[ $EUID -ne 0 ]] && err "Запустите скрипт от root: sudo bash setup.sh"
+> /tmp/eclipse_install.log  # очищаем лог
 
-# ── OS check ────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+step "ПРОВЕРКА СИСТЕМЫ"
+
+[[ $EUID -ne 0 ]] && fail "Запустите скрипт от root:  sudo bash setup.sh"
+
 . /etc/os-release 2>/dev/null || true
-if [[ "${ID:-}" != "ubuntu" ]]; then
-  warn "Обнаружена не Ubuntu. Продолжение на свой риск."
-fi
+ok "ОС: ${PRETTY_NAME:-Unknown}"
+ok "Архитектура: $(uname -m)"
+ok "Директория установки: ${INSTALL_DIR}"
 
-# ── Interactive config ───────────────────────────────────────────────────────
-info "Определяем внешний IP сервера…"
-SERVER_IP=$(curl -s --max-time 5 https://api.ipify.org || curl -s --max-time 5 https://ifconfig.me || echo "0.0.0.0")
-log "Внешний IP: ${SERVER_IP}"
+# ════════════════════════════════════════════════════════════════════════════
+step "ВВОД ПАРАМЕТРОВ"
 
-read -rp "$(echo -e "${CYAN}[?]${NC} Укажите IP/домен сервера [${SERVER_IP}]: ")" input_ip
-SERVER_IP="${input_ip:-$SERVER_IP}"
+# Определяем IP
+SERVER_IP=$(curl -s --max-time 6 https://api.ipify.org 2>/dev/null \
+         || curl -s --max-time 6 https://ifconfig.me 2>/dev/null \
+         || hostname -I 2>/dev/null | awk '{print $1}' \
+         || echo "")
 
-read -rsp "$(echo -e "${CYAN}[?]${NC} Пароль для веб-интерфейса (min 12 символов): ")" UI_PASSWORD
-echo
-[[ ${#UI_PASSWORD} -lt 12 ]] && err "Пароль слишком короткий"
-
-read -rsp "$(echo -e "${CYAN}[?]${NC} Повторите пароль: ")" UI_PASSWORD2
-echo
-[[ "$UI_PASSWORD" != "$UI_PASSWORD2" ]] && err "Пароли не совпадают"
-
-INSTALL_DIR="${INSTALL_DIR:-/opt/eclips}"
-
-# ── Install dependencies ─────────────────────────────────────────────────────
-info "Обновление пакетов и установка зависимостей…"
-apt-get update -qq
-apt-get install -y -qq \
-  curl wget git ufw ca-certificates \
-  gnupg lsb-release software-properties-common
-
-# ── Install Docker ───────────────────────────────────────────────────────────
-if ! command -v docker &>/dev/null; then
-  info "Установка Docker…"
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
-
-  echo "deb [arch=$(dpkg --print-architecture) \
-    signed-by=/etc/apt/keyrings/docker.gpg] \
-    https://download.docker.com/linux/ubuntu \
-    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-    > /etc/apt/sources.list.d/docker.list
-
-  apt-get update -qq
-  apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
-  systemctl enable docker
-  systemctl start docker
-  log "Docker установлен"
+if [[ -n "$SERVER_IP" ]]; then
+  ok "Внешний IP определён: ${B}${SERVER_IP}${NC}"
 else
-  log "Docker уже установлен: $(docker --version)"
+  warn "Не удалось определить внешний IP"
+  SERVER_IP="YOUR_SERVER_IP"
 fi
 
-# docker compose (v2)
-if ! docker compose version &>/dev/null; then
-  info "Установка docker-compose-plugin…"
-  apt-get install -y -qq docker-compose-plugin
+echo ""
+read -rp "$(echo -e "  ${C}?${NC} IP или домен сервера [${B}${SERVER_IP}${NC}]: ")" _input
+SERVER_IP="${_input:-$SERVER_IP}"
+ok "Сервер: ${B}${SERVER_IP}${NC}"
+
+echo ""
+while true; do
+  read -rsp "$(echo -e "  ${C}?${NC} Придумайте пароль для веб-интерфейса (мин. 8 символов): ")" UI_PASSWORD
+  echo ""
+  if [[ ${#UI_PASSWORD} -lt 8 ]]; then
+    echo -e "  ${R}✗  Слишком короткий — минимум 8 символов${NC}"; continue
+  fi
+  read -rsp "$(echo -e "  ${C}?${NC} Повторите пароль: ")" UI_PASSWORD2
+  echo ""
+  [[ "$UI_PASSWORD" == "$UI_PASSWORD2" ]] && { ok "Пароль принят"; break; }
+  echo -e "  ${R}✗  Пароли не совпадают${NC}"
+done
+
+# ════════════════════════════════════════════════════════════════════════════
+step "УСТАНОВКА ПАКЕТОВ"
+
+run_silent "Обновление apt" apt-get update -qq
+run_silent "Установка базовых пакетов" \
+  apt-get install -y -qq curl wget git unzip ufw ca-certificates \
+    gnupg lsb-release software-properties-common
+
+# ════════════════════════════════════════════════════════════════════════════
+step "УСТАНОВКА DOCKER"
+
+if command -v docker &>/dev/null; then
+  ok "Docker уже установлен: $(docker --version | awk '{print $3}' | tr -d ',')"
+else
+  run_silent "Добавление GPG-ключа Docker" bash -c '
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg'
+
+  run_silent "Добавление репозитория Docker" bash -c '
+    . /etc/os-release
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt-get update -qq'
+
+  run_silent "Установка Docker CE" \
+    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+  systemctl enable docker >>/tmp/eclipse_install.log 2>&1
+  systemctl start  docker >>/tmp/eclipse_install.log 2>&1
+  ok "Docker установлен: $(docker --version | awk '{print $3}' | tr -d ',')"
 fi
 
-# ── Install xray binary (for key generation) ─────────────────────────────────
-info "Генерация X25519 ключей Xray…"
-if ! command -v xray &>/dev/null; then
-  XRAY_VERSION="v24.3.18"
+if docker compose version &>/dev/null; then
+  ok "Docker Compose: $(docker compose version 2>/dev/null | awk '{print $4}' || echo 'v2')"
+else
+  run_silent "Установка docker-compose-plugin" apt-get install -y -qq docker-compose-plugin
+  ok "Docker Compose установлен"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+step "ГЕНЕРАЦИЯ X25519 КЛЮЧЕЙ (Xray)"
+
+XRAY_BIN=""
+for candidate in xray /usr/local/bin/xray; do
+  command -v "$candidate" &>/dev/null && { XRAY_BIN="$candidate"; break; }
+done
+
+if [[ -z "$XRAY_BIN" ]]; then
   ARCH=$(uname -m)
-  [[ "$ARCH" == "x86_64" ]] && XARCH="64" || XARCH="arm64-v8a"
-  XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-${XARCH}.zip"
-  wget -q "$XRAY_URL" -O /tmp/xray.zip
-  unzip -qo /tmp/xray.zip xray -d /usr/local/bin/
-  chmod +x /usr/local/bin/xray
-  rm /tmp/xray.zip
+  [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]] && XARCH="arm64-v8a" || XARCH="64"
+
+  XRAY_VER=$(curl -s --max-time 10 \
+    https://api.github.com/repos/XTLS/Xray-core/releases/latest \
+    | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "v24.9.30")
+  info "Xray версия: ${XRAY_VER}"
+
+  run_silent "Скачивание Xray-core ${XRAY_VER}" \
+    wget -q "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-${XARCH}.zip" \
+      -O /tmp/xray.zip
+
+  run_silent "Распаковка Xray" bash -c '
+    unzip -qo /tmp/xray.zip xray -d /usr/local/bin/
+    chmod +x /usr/local/bin/xray
+    rm -f /tmp/xray.zip'
+
+  XRAY_BIN="/usr/local/bin/xray"
 fi
 
-KEY_OUTPUT=$(xray x25519 2>/dev/null || /usr/local/bin/xray x25519)
-PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep "Private key:" | awk '{print $3}')
-PUBLIC_KEY=$(echo  "$KEY_OUTPUT" | grep "Public key:"  | awk '{print $3}')
+ok "Xray binary: ${XRAY_BIN}"
 
-if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-  err "Не удалось сгенерировать ключи. Проверьте xray binary."
-fi
+KEY_OUTPUT=$($XRAY_BIN x25519 2>/dev/null) \
+  || fail "Не удалось сгенерировать X25519 ключи"
 
-log "Private key: ${PRIVATE_KEY:0:8}…"
-log "Public key:  ${PUBLIC_KEY:0:8}…"
+PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep -i "private" | awk '{print $NF}')
+PUBLIC_KEY=$(echo  "$KEY_OUTPUT" | grep -i "public"  | awk '{print $NF}')
 
-# ── Configure UFW ────────────────────────────────────────────────────────────
-info "Настройка UFW firewall…"
-ufw --force reset > /dev/null
-ufw default deny incoming  > /dev/null
-ufw default allow outgoing > /dev/null
-ufw allow ssh              > /dev/null
-ufw allow 443/tcp          > /dev/null   # VLESS+Reality TCP
-ufw allow 8443/tcp         > /dev/null   # VLESS+Reality gRPC
-ufw allow 80/tcp           > /dev/null   # Web dashboard
-ufw allow 8080/tcp         > /dev/null   # API (если нужен прямой доступ)
-ufw --force enable         > /dev/null
-log "UFW настроен: порты 443, 8443, 80, 8080"
+[[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]] \
+  && fail "Ошибка парсинга ключей. Вывод:\n$KEY_OUTPUT"
 
-# ── Create install directory ─────────────────────────────────────────────────
-info "Создание директории ${INSTALL_DIR}…"
-mkdir -p "${INSTALL_DIR}"/{backend,frontend,nginx,data}
+ok "Private Key: ${B}${PRIVATE_KEY:0:14}…${NC}  (сохранён в .env)"
+ok "Public Key:  ${B}${PUBLIC_KEY}${NC}"
 
-# Copy project files if running from source dir, otherwise download
+# ════════════════════════════════════════════════════════════════════════════
+step "НАСТРОЙКА FIREWALL"
+
+ufw --force reset    >>/tmp/eclipse_install.log 2>&1
+ufw default deny incoming  >>/tmp/eclipse_install.log 2>&1
+ufw default allow outgoing >>/tmp/eclipse_install.log 2>&1
+for port in 22 80 443 8080 8443; do
+  ufw allow $port/tcp >>/tmp/eclipse_install.log 2>&1
+done
+ufw --force enable >>/tmp/eclipse_install.log 2>&1
+
+ok "Порты открыты: 22 (SSH)  80 (Web UI)  443 (VLESS/TCP)  8443 (VLESS/gRPC)  8080 (API)"
+
+# ════════════════════════════════════════════════════════════════════════════
+step "ПОДГОТОВКА ФАЙЛОВ ПРОЕКТА"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/docker-compose.yml" ]]; then
-  cp -r "${SCRIPT_DIR}"/* "${INSTALL_DIR}/"
-  log "Файлы проекта скопированы из ${SCRIPT_DIR}"
-else
-  warn "Файлы проекта не найдены рядом. Клонируем репозиторий…"
-  # Replace with your actual repo URL
-  git clone https://github.com/your-org/eclips "${INSTALL_DIR}/src" 2>/dev/null || true
-fi
+info "Копируем файлы из: ${SCRIPT_DIR}"
 
-# ── Generate .env ────────────────────────────────────────────────────────────
-info "Генерация .env файла…"
+mkdir -p "${INSTALL_DIR}"/{backend,frontend,nginx,data,xray_logs}
+
+REQUIRED_FILES=(
+  "docker-compose.yml"
+  "backend/main.py"
+  "backend/Dockerfile"
+  "backend/requirements.txt"
+  "frontend/index.html"
+  "nginx/nginx.conf"
+)
+
+ALL_PRESENT=true
+for f in "${REQUIRED_FILES[@]}"; do
+  src="${SCRIPT_DIR}/${f}"
+  dst="${INSTALL_DIR}/${f}"
+  mkdir -p "$(dirname "$dst")"
+  if [[ -f "$src" ]]; then
+    cp "$src" "$dst"
+    ok "Скопирован: ${f}"
+  else
+    warn "Не найден: ${f}"
+    ALL_PRESENT=false
+  fi
+done
+
+[[ "$ALL_PRESENT" == "false" ]] && warn "Некоторые файлы отсутствуют — убедитесь что setup.sh запущен из папки проекта Eclipse"
+
+# Создаём начальный пустой конфиг xray чтобы volume монтировался нормально
+mkdir -p "${INSTALL_DIR}/xray_config"
+[[ ! -f "${INSTALL_DIR}/xray_config/config.json" ]] && echo '{}' > "${INSTALL_DIR}/xray_config/config.json"
+
+# ════════════════════════════════════════════════════════════════════════════
+step "СОЗДАНИЕ .env ФАЙЛА"
+
 cat > "${INSTALL_DIR}/.env" << ENVEOF
 ECLIPS_PASSWORD=${UI_PASSWORD}
 SERVER_IP=${SERVER_IP}
 PRIVATE_KEY=${PRIVATE_KEY}
 PUBLIC_KEY=${PUBLIC_KEY}
+DATA_PATH=/app/data
 ENVEOF
 chmod 600 "${INSTALL_DIR}/.env"
-log ".env создан с правами 600"
 
-# ── Create initial xray config dir ───────────────────────────────────────────
-mkdir -p "${INSTALL_DIR}/xray_config"
-mkdir -p "${INSTALL_DIR}/xray_logs"
+ok "Файл .env создан: ${INSTALL_DIR}/.env  (права 600)"
 
-# ── Start stack ──────────────────────────────────────────────────────────────
-info "Запуск Docker Compose стека…"
+# ════════════════════════════════════════════════════════════════════════════
+step "ЗАПУСК DOCKER СТЕКА"
+
 cd "${INSTALL_DIR}"
-docker compose --env-file .env pull --quiet 2>/dev/null || true
-docker compose --env-file .env up -d --build
 
-# ── Wait for health check ────────────────────────────────────────────────────
-info "Ожидание запуска сервисов (30 сек)…"
-sleep 15
+# Останавливаем если уже запущено
+docker compose down >>/tmp/eclipse_install.log 2>&1 || true
 
-for i in $(seq 1 5); do
-  STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health || echo "000")
-  if [[ "$STATUS" == "200" ]]; then
-    log "Backend API работает (HTTP 200)"
+run_silent "Загрузка образа teddysun/xray"  docker pull teddysun/xray:latest
+run_silent "Загрузка образа nginx:alpine"   docker pull nginx:alpine
+run_silent "Загрузка образа python:3.12-slim" docker pull python:3.12-slim
+
+run_silent "Сборка backend контейнера" \
+  docker compose --env-file .env build --no-cache
+
+info "Поднимаем контейнеры…"
+docker compose --env-file .env up -d >>/tmp/eclipse_install.log 2>&1
+ok "Команда docker compose up выполнена"
+
+# ════════════════════════════════════════════════════════════════════════════
+step "ОЖИДАНИЕ И ПРОВЕРКА ЗАПУСКА"
+
+echo ""
+info "Проверяем готовность сервисов (до 90 секунд)…"
+echo ""
+
+declare -A SVC_STATUS=(
+  [eclips_xray]=false
+  [eclips_backend]=false
+  [eclips_nginx]=false
+)
+API_OK=false
+WEB_OK=false
+
+for i in $(seq 1 18); do
+  sleep 5
+
+  for c in eclips_xray eclips_backend eclips_nginx; do
+    ST=$(docker inspect --format='{{.State.Status}}' "$c" 2>/dev/null || echo "—")
+    [[ "$ST" == "running" ]] && SVC_STATUS[$c]=true
+  done
+
+  HTTP_API=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+    http://localhost:8080/health 2>/dev/null || echo "—")
+  HTTP_WEB=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+    http://localhost/ 2>/dev/null || echo "—")
+
+  [[ "$HTTP_API" == "200" ]] && API_OK=true
+  [[ "$HTTP_WEB" == "200" ]] && WEB_OK=true
+
+  # Красивая строка прогресса
+  xray_icon="${SVC_STATUS[eclips_xray]}" && [[ "$xray_icon" == "true" ]] && xi="${G}✔${NC}" || xi="${Y}…${NC}"
+  back_icon="${SVC_STATUS[eclips_backend]}" && [[ "$back_icon" == "true" ]] && bi="${G}✔${NC}" || bi="${Y}…${NC}"
+  ngnx_icon="${SVC_STATUS[eclips_nginx]}" && [[ "$ngnx_icon" == "true" ]] && ni="${G}✔${NC}" || ni="${Y}…${NC}"
+  [[ "$API_OK" == "true" ]] && ai="${G}✔ 200${NC}" || ai="${Y}${HTTP_API}${NC}"
+  [[ "$WEB_OK" == "true" ]] && wi="${G}✔ 200${NC}" || wi="${Y}${HTTP_WEB}${NC}"
+
+  printf "  [%2ds]  xray %b  backend %b  nginx %b  api %b  web %b\n" \
+    $((i*5)) "$xi" "$bi" "$ni" "$ai" "$wi"
+
+  if ${SVC_STATUS[eclips_xray]} && ${SVC_STATUS[eclips_backend]} && \
+     ${SVC_STATUS[eclips_nginx]} && $API_OK && $WEB_OK; then
+    echo ""
+    ok "${G}${B}Все сервисы запущены и отвечают!${NC}"
     break
   fi
-  info "Попытка ${i}/5… HTTP ${STATUS}"
-  sleep 5
 done
 
-# ── Print summary ─────────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════${NC}"
-echo -e "${BOLD}${GREEN}  ECLIPS VPN УСПЕШНО УСТАНОВЛЕН!${NC}"
-echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════${NC}"
+
+# Финальный отчёт
+echo -e "  ${B}Итоговый статус:${NC}"
+for c in eclips_xray eclips_backend eclips_nginx; do
+  ST=$(docker inspect --format='{{.State.Status}}' "$c" 2>/dev/null || echo "не найден")
+  LABEL="${c/eclips_/}"
+  if [[ "$ST" == "running" ]]; then
+    ok "${LABEL}: ${G}${B}RUNNING${NC}"
+  else
+    warn "${LABEL}: ${R}${B}${ST}${NC}"
+    echo -e "  ${DIM}  Логи ${c} (последние 20 строк):${NC}"
+    docker logs --tail 20 "$c" 2>&1 | sed 's/^/      /' || true
+  fi
+done
+
+$API_OK && ok "Backend API: ${G}${B}HTTP 200${NC}" || warn "Backend API не отвечает — попробуйте через минуту"
+$WEB_OK && ok "Веб-интерфейс: ${G}${B}HTTP 200${NC}" || warn "Nginx не отвечает — попробуйте через минуту"
+
+# ════════════════════════════════════════════════════════════════════════════
+# ФИНАЛЬНАЯ ИНСТРУКЦИЯ
+# ════════════════════════════════════════════════════════════════════════════
+
 echo ""
-echo -e "  ${CYAN}Веб-интерфейс:${NC}  http://${SERVER_IP}/"
-echo -e "  ${CYAN}API:${NC}            http://${SERVER_IP}:8080/api/"
-echo -e "  ${CYAN}Логин:${NC}          eclips"
-echo -e "  ${CYAN}Пароль:${NC}         [указанный вами]"
 echo ""
-echo -e "  ${YELLOW}VLESS порты:${NC}"
-echo -e "  • TCP  port 443  (VLESS + Reality)"
-echo -e "  • gRPC port 8443 (VLESS + Reality multiPath)"
+echo -e "${G}${B}╔═══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${G}${B}║              ✅  ECLIPSE VPN УСТАНОВЛЕН                   ║${NC}"
+echo -e "${G}${B}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${YELLOW}Public Key:${NC} ${PUBLIC_KEY}"
+echo -e "${B}${Y}  ┌─────────────────────────────────────────────────────┐${NC}"
+echo -e "${B}${Y}  │              КАК ЗАЙТИ В ВЕБ-ИНТЕРФЕЙС              │${NC}"
+echo -e "${B}${Y}  └─────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "  ${RED}ВАЖНО:${NC} Сохраните .env файл: ${INSTALL_DIR}/.env"
-echo -e "  ${RED}ВАЖНО:${NC} Никому не передавайте Private Key!"
+echo -e "  Откройте в браузере:"
 echo ""
-echo -e "  Управление: cd ${INSTALL_DIR} && docker compose logs -f"
-echo -e "  Остановка:  cd ${INSTALL_DIR} && docker compose down"
+echo -e "  ${B}${C}  ➜  http://${SERVER_IP}/${NC}"
+echo ""
+echo -e "  Логин:   ${B}eclips${NC}"
+echo -e "  Пароль:  ${B}[указанный вами при установке]${NC}"
+echo ""
+echo -e "${B}  ┌─────────────────────────────────────────────────────┐${NC}"
+echo -e "${B}  │            ПАРАМЕТРЫ VPN ПОДКЛЮЧЕНИЯ                │${NC}"
+echo -e "${B}  └─────────────────────────────────────────────────────┘${NC}"
+echo ""
+echo -e "  Сервер:         ${C}${SERVER_IP}${NC}"
+echo -e "  TCP порт 443:   ${C}VLESS + Reality  (xtls-rprx-vision, uTLS Safari)${NC}"
+echo -e "  gRPC порт 8443: ${C}VLESS + Reality  (multiPath, uTLS Chrome)${NC}"
+echo -e "  Public Key:     ${C}${PUBLIC_KEY}${NC}"
+echo ""
+echo -e "  ${DIM}QR-коды и готовые VLESS-ссылки — в веб-интерфейсе${NC}"
+echo ""
+echo -e "${B}  ┌─────────────────────────────────────────────────────┐${NC}"
+echo -e "${B}  │                 УПРАВЛЕНИЕ СТЕКОМ                   │${NC}"
+echo -e "${B}  └─────────────────────────────────────────────────────┘${NC}"
+echo ""
+echo -e "  Статус:      ${C}cd ${INSTALL_DIR} && docker compose ps${NC}"
+echo -e "  Логи live:   ${C}cd ${INSTALL_DIR} && docker compose logs -f${NC}"
+echo -e "  Перезапуск:  ${C}cd ${INSTALL_DIR} && docker compose restart${NC}"
+echo -e "  Остановить:  ${C}cd ${INSTALL_DIR} && docker compose down${NC}"
+echo ""
+echo -e "  Ключи и пароль: ${C}cat ${INSTALL_DIR}/.env${NC}"
+echo -e "  Лог установки:  ${C}cat /tmp/eclipse_install.log${NC}"
+echo ""
+
+if [[ ${#ERRORS[@]} -gt 0 ]]; then
+  echo -e "${Y}${B}  ┌─────────────────────────────────────────────────────┐${NC}"
+  echo -e "${Y}${B}  │    ⚠  ПРЕДУПРЕЖДЕНИЯ (изучите при проблемах)        │${NC}"
+  echo -e "${Y}${B}  └─────────────────────────────────────────────────────┘${NC}"
+  for e in "${ERRORS[@]}"; do echo -e "  ${Y}•${NC} $e"; done
+  echo ""
+fi
+
+echo -e "${G}${B}═══════════════════════════════════════════════════════════${NC}"
 echo ""
